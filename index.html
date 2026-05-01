@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Cat Captain — Parry the Flies</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    height: 100%;
+    background: #cfe9ff;
+    color: #1a2238;
+    font-family: -apple-system, system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  #wrap {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #hud {
+    width: 100%;
+    padding: 10px 16px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 18px;
+    font-weight: 600;
+    background: rgba(255,255,255,0.55);
+    color: #1a2238;
+  }
+  #stage {
+    position: relative;
+    flex: 1;
+    width: 100%;
+    overflow: hidden;
+  }
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: url('20260501_164407.jpg') center / cover no-repeat, #2f80b8;
+    display: block;
+  }
+  #controls {
+    width: 100%;
+    padding: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255,255,255,0.6);
+    border-top: 1px solid rgba(0,0,0,0.08);
+  }
+  .left-pad { display: flex; gap: 10px; }
+  .btn {
+    border-radius: 999px;
+    border: 2px solid rgba(0,0,0,0.2);
+    background: rgba(255,255,255,0.85);
+    color: #1a2238;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.05s, background 0.1s;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  }
+  .btn:active, .btn.pressed {
+    background: rgba(0,0,0,0.1);
+    transform: scale(0.96);
+  }
+  .btn.dir {
+    width: 84px;
+    height: 84px;
+    font-size: 32px;
+  }
+  .btn.parry {
+    width: 180px;
+    height: 84px;
+    font-size: 22px;
+    background: #ffd24a;
+    border-color: #d9a920;
+    color: #3a2a05;
+    letter-spacing: 0.5px;
+  }
+  .btn.parry:active, .btn.parry.pressed {
+    background: #f0bd2a;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.8);
+    color: #1a2238;
+    text-align: center;
+    padding: 20px;
+    z-index: 10;
+  }
+  #overlay h1 { font-size: 32px; margin-bottom: 12px; }
+  #overlay p { font-size: 16px; opacity: 0.85; margin-bottom: 20px; line-height: 1.4; max-width: 420px; }
+  #overlay button {
+    padding: 14px 32px;
+    font-size: 20px;
+    font-weight: 700;
+    border-radius: 999px;
+    border: 2px solid #fff;
+    background: #ff5050;
+    color: #fff;
+    cursor: pointer;
+  }
+  #overlay button:active { transform: scale(0.96); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div>Score: <span id="score">0</span></div>
+    <div>Lives: <span id="lives">3</span></div>
+  </div>
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <div id="overlay">
+      <h1>🐱 Cat Captain ⛵</h1>
+      <p>Flies will swarm and shoot shells at your ship.<br/>Press <b>Space</b> (or the yellow button) <b>just as a shell gets close</b> to swat it back.<br/>Reflected shells take down the flies!</p>
+      <button id="startBtn">Start</button>
+    </div>
+  </div>
+  <div id="controls">
+    <div class="left-pad">
+      <div class="btn dir" id="leftBtn">◀</div>
+      <div class="btn dir" id="rightBtn">▶</div>
+    </div>
+    <div class="btn parry" id="parryBtn">PARRY ⚔️</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    W = rect.width;
+    H = rect.height;
+    canvas.width = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    center.x = W / 2;
+    center.y = H / 2;
+  }
+  window.addEventListener('resize', resize);
+
+  const input = { left: false, right: false, parry: false, parryEdge: false };
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
+    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = true;
+    else if (e.key === ' ' || e.key === 'Spacebar') {
+      if (!input.parry) input.parryEdge = true;
+      input.parry = true;
+      e.preventDefault();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = false;
+    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = false;
+    else if (e.key === ' ' || e.key === 'Spacebar') input.parry = false;
+  });
+
+  function bindButton(id, key) {
+    const el = document.getElementById(id);
+    const press = (e) => {
+      e.preventDefault();
+      if (!input[key]) input[key + 'Edge'] = true;
+      input[key] = true;
+      el.classList.add('pressed');
+    };
+    const release = (e) => {
+      e.preventDefault();
+      input[key] = false;
+      el.classList.remove('pressed');
+    };
+    el.addEventListener('touchstart', press, { passive: false });
+    el.addEventListener('touchend', release);
+    el.addEventListener('touchcancel', release);
+    el.addEventListener('mousedown', press);
+    el.addEventListener('mouseup', release);
+    el.addEventListener('mouseleave', release);
+  }
+  bindButton('leftBtn', 'left');
+  bindButton('rightBtn', 'right');
+  bindButton('parryBtn', 'parry');
+
+  const center = { x: 0, y: 0 };
+  const cat = { height: 140, x: 0, speed: 280 };
+  const catImg = new Image();
+  catImg.src = '0a0e3631-00e4-42fd-b965-db17b21e84dd.png';
+  const SHIP_SIZE = 170;
+  const SHIP_HALF = 60;
+  const TOTAL_FLIES = 8;
+  const MAX_ACTIVE_FLIES = 4;
+  const PARRY_RADIUS = 90;
+  const CAT_HIT_RADIUS = 36;
+  const PARRY_DURATION = 140;
+  const PARRY_COOLDOWN = 320;
+
+  let flies = [];
+  let shells = [];
+  let particles = [];
+  let score = 0;
+  let lives = 3;
+  let elapsed = 0;
+  let running = false;
+  let lastTime = 0;
+  let shipBob = 0;
+  let totalSpawned = 0;
+
+  let parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
+
+  function reset() {
+    resize();
+    flies = [];
+    shells = [];
+    particles = [];
+    score = 0;
+    lives = 3;
+    elapsed = 0;
+    cat.x = 0;
+    totalSpawned = 0;
+    parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
+    scoreEl.textContent = score;
+    livesEl.textContent = lives;
+  }
+
+  function start() {
+    reset();
+    overlay.classList.add('hidden');
+    running = true;
+    lastTime = performance.now();
+    requestAnimationFrame(loop);
+  }
+
+  function showGameOver() {
+    running = false;
+    overlay.classList.remove('hidden');
+    overlay.querySelector('h1').textContent = '😿 Ship Sunk';
+    overlay.querySelector('p').innerHTML = `You scored <b>${score}</b>.<br/>Tap Start to set sail again.`;
+    startBtn.textContent = 'Play Again';
+  }
+
+  function showWin() {
+    running = false;
+    overlay.classList.remove('hidden');
+    overlay.querySelector('h1').textContent = '🏆 Victory!';
+    overlay.querySelector('p').innerHTML = `All ${TOTAL_FLIES} flies defeated!<br/>Score: <b>${score}</b> · Lives left: <b>${lives}</b>`;
+    startBtn.textContent = 'Play Again';
+  }
+
+  startBtn.addEventListener('click', start);
+
+  function spawnFly() {
+    const angle = Math.random() * Math.PI * 2;
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    flies.push({
+      angle,
+      radius: 230 + Math.random() * 90,
+      orbitSpeed: dir * (0.35 + Math.random() * 0.4),
+      bob: Math.random() * Math.PI * 2,
+      shootTimer: 1500 + Math.random() * 2000,
+      size: 36,
+      x: 0, y: 0,
+    });
+  }
+
+  function shootShell(fly) {
+    const targetX = center.x + cat.x;
+    const targetY = center.y;
+    const dx = targetX - fly.x;
+    const dy = targetY - fly.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const speed = 170 + Math.min(140, elapsed * 0.006);
+    shells.push({
+      x: fly.x,
+      y: fly.y,
+      vx: (dx / len) * speed,
+      vy: (dy / len) * speed,
+      reflected: false,
+      trail: [],
+    });
+  }
+
+  function explode(x, y, color, count = 14) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 80 + Math.random() * 160;
+      particles.push({
+        x, y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        life: 0.45 + Math.random() * 0.35,
+        age: 0,
+        color,
+        size: 2 + Math.random() * 3,
+      });
+    }
+  }
+
+  function update(dt) {
+    elapsed += dt * 1000;
+    shipBob += dt;
+
+    if (input.left) cat.x -= cat.speed * dt;
+    if (input.right) cat.x += cat.speed * dt;
+    cat.x = Math.max(-SHIP_HALF, Math.min(SHIP_HALF, cat.x));
+
+    const catWorldX = center.x + cat.x;
+    const catWorldY = center.y;
+
+    const desiredActive = Math.min(MAX_ACTIVE_FLIES, 2 + Math.floor(elapsed / 8000));
+    while (flies.length < desiredActive && totalSpawned < TOTAL_FLIES) {
+      spawnFly();
+      totalSpawned++;
+    }
+
+    for (const f of flies) {
+      f.angle += f.orbitSpeed * dt;
+      f.bob += dt * 2;
+      const r = f.radius + Math.sin(f.bob) * 18;
+      f.x = center.x + Math.cos(f.angle) * r;
+      f.y = center.y + Math.sin(f.angle) * r * 0.85;
+    }
+
+    const hasActiveShell = shells.some(s => !s.reflected);
+    if (!hasActiveShell) {
+      for (const f of flies) {
+        f.shootTimer -= dt * 1000;
+        if (f.shootTimer <= 0) {
+          shootShell(f);
+          const base = 2400 - Math.min(1400, elapsed * 0.03);
+          f.shootTimer = base * (0.6 + Math.random() * 0.8);
+          break;
+        }
+      }
+    }
+
+    for (const s of shells) {
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.trail.push({ x: s.x, y: s.y });
+      if (s.trail.length > 6) s.trail.shift();
+    }
+
+    if (input.parryEdge && performance.now() > parry.cooldownUntil) {
+      parry.activeUntil = performance.now() + PARRY_DURATION;
+      parry.cooldownUntil = performance.now() + PARRY_COOLDOWN;
+      parry.success = false;
+      parry.ringT = 1;
+
+      for (const s of shells) {
+        if (s.reflected) continue;
+        const dx = s.x - catWorldX;
+        const dy = s.y - catWorldY;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= PARRY_RADIUS && dist > CAT_HIT_RADIUS - 4) {
+          const len = Math.hypot(s.vx, s.vy) || 1;
+          const nx = dx / (dist || 1);
+          const ny = dy / (dist || 1);
+          const speed = len * 1.35;
+          s.vx = nx * speed;
+          s.vy = ny * speed;
+          s.reflected = true;
+          score += 5;
+          parry.success = true;
+          explode(s.x, s.y, '#fff066', 10);
+        }
+      }
+      if (parry.success) score += 0;
+    }
+    input.parryEdge = false;
+
+    for (const s of shells) {
+      const dx = s.x - catWorldX;
+      const dy = s.y - catWorldY;
+      const dist = Math.hypot(dx, dy);
+      if (!s.reflected && dist < CAT_HIT_RADIUS) {
+        s.dead = true;
+        lives -= 1;
+        livesEl.textContent = lives;
+        explode(catWorldX, catWorldY, '#ff5050', 18);
+        if (lives <= 0) { showGameOver(); return; }
+      }
+    }
+
+    for (const s of shells) {
+      if (!s.reflected || s.dead) continue;
+      for (const f of flies) {
+        if (f.dead) continue;
+        const dx = s.x - f.x;
+        const dy = s.y - f.y;
+        if (Math.hypot(dx, dy) < f.size * 0.55) {
+          s.dead = true;
+          f.dead = true;
+          score += 25;
+          scoreEl.textContent = score;
+          explode(f.x, f.y, '#9aff70', 16);
+          break;
+        }
+      }
+    }
+
+    for (const s of shells) {
+      if (s.x < -60 || s.x > W + 60 || s.y < -60 || s.y > H + 60) s.dead = true;
+    }
+
+    if (parry.success) scoreEl.textContent = score;
+
+    shells = shells.filter(s => !s.dead);
+    flies = flies.filter(f => !f.dead);
+
+    if (totalSpawned >= TOTAL_FLIES && flies.length === 0) {
+      scoreEl.textContent = score;
+      showWin();
+      return;
+    }
+
+    for (const p of particles) {
+      p.age += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 220 * dt;
+    }
+    particles = particles.filter(p => p.age < p.life);
+
+    if (parry.ringT > 0) parry.ringT = Math.max(0, parry.ringT - dt / (PARRY_DURATION / 1000));
+  }
+
+  function drawSprite(emoji, x, y, size) {
+    ctx.font = `${size}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(emoji, x, y);
+  }
+
+  function drawWaves() {
+    const horizonY = center.y + 30;
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 4; i++) {
+      const y = horizonY + i * 28 + Math.sin(shipBob * 1.2 + i) * 3;
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 24) {
+        const wy = y + Math.sin((x + shipBob * 60 + i * 40) * 0.04) * 4;
+        if (x === 0) ctx.moveTo(x, wy);
+        else ctx.lineTo(x, wy);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, W, H);
+
+    const bobY = Math.sin(shipBob * 1.6) * 4;
+    const catScreenX = center.x + cat.x;
+    const catScreenY = center.y + bobY;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.setLineDash([5, 9]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(catScreenX, catScreenY, PARRY_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    drawSprite('⛵', center.x, center.y + bobY + 18, SHIP_SIZE);
+
+    if (catImg.complete && catImg.naturalWidth > 0) {
+      const h = cat.height;
+      const w = h * (catImg.naturalWidth / catImg.naturalHeight);
+      const cy = catScreenY - 8;
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(catScreenX, cy, w * 0.46, h * 0.48, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(catImg, catScreenX - w / 2, cy - h / 2, w, h);
+      ctx.restore();
+    } else {
+      drawSprite('🐱', catScreenX, catScreenY - 6, 56);
+    }
+
+    for (const f of flies) {
+      drawSprite('🪰', f.x, f.y, f.size);
+    }
+
+    for (const s of shells) {
+      ctx.save();
+      const trailColor = s.reflected ? 'rgba(255,240,100,0.6)' : 'rgba(60,30,20,0.5)';
+      ctx.strokeStyle = trailColor;
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < s.trail.length; i++) {
+        const p = s.trail[i];
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = s.reflected ? '#fff066' : '#2a1a10';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      if (!s.reflected) {
+        ctx.strokeStyle = '#aa3030';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
+    if (parry.ringT > 0) {
+      const t = parry.ringT;
+      const r = PARRY_RADIUS * (0.6 + (1 - t) * 0.6);
+      ctx.save();
+      ctx.strokeStyle = parry.success
+        ? `rgba(255,210,80,${t})`
+        : `rgba(255,255,255,${t * 0.5})`;
+      ctx.lineWidth = 6 * t + 2;
+      ctx.beginPath();
+      ctx.arc(catScreenX, catScreenY, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    for (const p of particles) {
+      const t = 1 - p.age / p.life;
+      ctx.globalAlpha = t;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function loop(now) {
+    if (!running) return;
+    const dt = Math.min(0.05, (now - lastTime) / 1000);
+    lastTime = now;
+    update(dt);
+    if (running) {
+      render();
+      requestAnimationFrame(loop);
+    }
+  }
+
+  resize();
+})();
+</script>
+</body>
+</html>
