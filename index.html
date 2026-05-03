@@ -196,6 +196,7 @@
   const input = {
     left: false, right: false, up: false, down: false,
     parry: false, parryEdge: false,
+    shoot: false, shootEdge: false,
     shipUp: false, shipDown: false, shipLeft: false, shipRight: false,
   };
 
@@ -210,7 +211,9 @@
     else if (e.key === 'd' || e.key === 'D') input.shipRight = true;
     else if (e.key === ' ' || e.key === 'Spacebar') {
       if (!input.parry) input.parryEdge = true;
+      if (!input.shoot) input.shootEdge = true;
       input.parry = true;
+      input.shoot = true;
       e.preventDefault();
     }
   });
@@ -223,7 +226,10 @@
     else if (e.key === 's' || e.key === 'S') input.shipDown = false;
     else if (e.key === 'a' || e.key === 'A') input.shipLeft = false;
     else if (e.key === 'd' || e.key === 'D') input.shipRight = false;
-    else if (e.key === ' ' || e.key === 'Spacebar') input.parry = false;
+    else if (e.key === ' ' || e.key === 'Spacebar') {
+      input.parry = false;
+      input.shoot = false;
+    }
   });
 
   function bindButton(id, key) {
@@ -263,6 +269,8 @@
   spiderImg.src = '2f3b1ecf-b8da-4a43-9cbd-bb3777e6aa32.png';
   const flyImg = new Image();
   flyImg.src = '2080cc72-76fc-42ee-9608-78f646dd419e.png';
+  const fastFlyImg = new Image();
+  fastFlyImg.src = 'aedda06f-f800-45ea-b770-d4077188ffc8.png';
 
   const ship = { x: 0, y: 0, speed: 240, hitRadius: 110 };
   const spider = { x: 0, y: 0, knockVx: 0, knockVy: 0 };
@@ -289,9 +297,14 @@
   const SPIDER_SPAWN_DIST = 380;
   const KNOCKBACK_SPEED = 720;
   const KNOCKBACK_DECAY = 1.6;
+  const CAT_SHOT_SPEED = 520;
+  const CAT_SHOT_COOLDOWN = 500;
+  const CAT_SHOT_RADIUS = 5;
 
   let flies = [];
   let shells = [];
+  let catShots = [];
+  let catShotCooldownUntil = 0;
   let mines = [];
   let particles = [];
   let score = 0;
@@ -310,6 +323,8 @@
     resize();
     flies = [];
     shells = [];
+    catShots = [];
+    catShotCooldownUntil = 0;
     mines = [];
     particles = [];
     score = 0;
@@ -360,13 +375,17 @@
   function spawnFly() {
     const angle = Math.random() * Math.PI * 2;
     const dir = Math.random() < 0.5 ? -1 : 1;
+    const fast = Math.random() < 0.4;
+    const orbitBase = fast ? 0.7 : 0.35;
+    const orbitJitter = fast ? 0.7 : 0.4;
     flies.push({
+      type: fast ? 'fast' : 'normal',
       angle,
-      radius: 230 + Math.random() * 90,
-      orbitSpeed: dir * (0.35 + Math.random() * 0.4),
+      radius: 280 + Math.random() * 90,
+      orbitSpeed: dir * (orbitBase + Math.random() * orbitJitter),
       bob: Math.random() * Math.PI * 2,
-      shootTimer: 1500 + Math.random() * 2000,
-      size: 60,
+      shootTimer: fast ? 700 + Math.random() * 900 : 1500 + Math.random() * 2000,
+      size: fast ? 52 : 60,
       x: 0, y: 0,
     });
   }
@@ -514,7 +533,9 @@
         f.shootTimer -= dt * 1000;
         if (f.shootTimer <= 0) {
           shootShell(f);
-          const base = 2400 - Math.min(1400, elapsed * 0.03);
+          const base = f.type === 'fast'
+            ? 1100 - Math.min(700, elapsed * 0.02)
+            : 2400 - Math.min(1400, elapsed * 0.03);
           f.shootTimer = base * (0.6 + Math.random() * 0.8);
           break;
         }
@@ -527,6 +548,46 @@
       s.trail.push({ x: s.x, y: s.y });
       if (s.trail.length > 6) s.trail.shift();
     }
+
+    if (input.shootEdge && performance.now() > catShotCooldownUntil) {
+      catShotCooldownUntil = performance.now() + CAT_SHOT_COOLDOWN;
+      catShots.push({ x: catWorldX, y: catWorldY, vx: 0, vy: -CAT_SHOT_SPEED, trail: [] });
+      catShots.push({ x: catWorldX, y: catWorldY, vx: 0, vy: CAT_SHOT_SPEED, trail: [] });
+    }
+    input.shootEdge = false;
+
+    for (const b of catShots) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.trail.push({ x: b.x, y: b.y });
+      if (b.trail.length > 6) b.trail.shift();
+      for (const f of flies) {
+        if (f.dead) continue;
+        const dx = b.x - f.x;
+        const dy = b.y - f.y;
+        if (Math.hypot(dx, dy) < f.size * 0.55) {
+          b.dead = true;
+          f.dead = true;
+          score += 25;
+          explode(f.x, f.y, '#9aff70', 16);
+          break;
+        }
+      }
+      if (!b.dead) {
+        const dx = b.x - spider.x;
+        const dy = b.y - spider.y;
+        if (Math.hypot(dx, dy) < SPIDER_HIT_R) {
+          b.dead = true;
+          const len = Math.hypot(b.vx, b.vy) || 1;
+          spider.knockVx += (b.vx / len) * KNOCKBACK_SPEED * 0.6;
+          spider.knockVy += (b.vy / len) * KNOCKBACK_SPEED * 0.6;
+          score += 2;
+          explode(b.x, b.y, '#9aff70', 8);
+        }
+      }
+      if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) b.dead = true;
+    }
+    catShots = catShots.filter(b => !b.dead);
 
     if (input.parryEdge && performance.now() > parry.cooldownUntil) {
       parry.activeUntil = performance.now() + PARRY_DURATION;
@@ -737,11 +798,12 @@
     }
 
     for (const f of flies) {
-      if (flyImg.complete && flyImg.naturalWidth > 0) {
-        const ratio = flyImg.naturalHeight / flyImg.naturalWidth;
+      const img = f.type === 'fast' ? fastFlyImg : flyImg;
+      if (img.complete && img.naturalWidth > 0) {
+        const ratio = img.naturalHeight / img.naturalWidth;
         const w = f.size;
         const h = w * ratio;
-        ctx.drawImage(flyImg, f.x - w / 2, f.y - h / 2, w, h);
+        ctx.drawImage(img, f.x - w / 2, f.y - h / 2, w, h);
       } else {
         drawSprite('🪰', f.x, f.y, f.size);
       }
@@ -780,6 +842,29 @@
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+    }
+
+    for (const b of catShots) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(120,220,255,0.55)';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < b.trail.length; i++) {
+        const p = b.trail[i];
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = '#e8f8ff';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, CAT_SHOT_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#3aa0d6';
+      ctx.lineWidth = 2;
+      ctx.stroke();
     }
 
     if (parry.ringT > 0) {
