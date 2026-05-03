@@ -273,7 +273,8 @@
   fastFlyImg.src = 'aedda06f-f800-45ea-b770-d4077188ffc8.png';
 
   const ship = { x: 0, y: 0, speed: 240, hitRadius: 110 };
-  const spider = { x: 0, y: 0, knockVx: 0, knockVy: 0 };
+  const SPIDER_COUNT = 2;
+  let spiders = [];
   const SHIP_SIZE = 170;
   const SHIP_HALF = 130;
   const SHIP_VHALF = 55;
@@ -337,7 +338,8 @@
     totalSpawned = 0;
     bgOffset = 0;
     mineSpawnTimer = 1.5;
-    spawnSpider();
+    spiders = [];
+    for (let i = 0; i < SPIDER_COUNT; i++) spawnSpider();
     parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
     scoreEl.textContent = score;
     livesEl.textContent = lives;
@@ -418,10 +420,12 @@
   function spawnSpider() {
     const angle = Math.random() * Math.PI * 2;
     const dist = SPIDER_SPAWN_DIST + Math.random() * 60;
-    spider.x = ship.x + Math.cos(angle) * dist;
-    spider.y = ship.y + Math.sin(angle) * dist;
-    spider.knockVx = 0;
-    spider.knockVy = 0;
+    spiders.push({
+      x: ship.x + Math.cos(angle) * dist,
+      y: ship.y + Math.sin(angle) * dist,
+      knockVx: 0,
+      knockVy: 0,
+    });
   }
 
   function explode(x, y, color, count = 14) {
@@ -494,23 +498,29 @@
     const catWorldY = ship.y - CAT_DECK_OFFSET + cat.y;
 
     {
-      const dx = ship.x - spider.x;
-      const dy = ship.y - spider.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const fvx = (dx / d) * SPIDER_SPEED;
-      const fvy = (dy / d) * SPIDER_SPEED;
       const decay = Math.exp(-KNOCKBACK_DECAY * dt);
-      spider.knockVx *= decay;
-      spider.knockVy *= decay;
-      spider.x += (fvx + spider.knockVx) * dt;
-      spider.y += (fvy + spider.knockVy) * dt;
-      if (d < ship.hitRadius + SPIDER_HIT_R) {
-        lives -= 1;
-        livesEl.textContent = lives;
-        explode(spider.x, spider.y, '#ff5050', 22);
-        if (lives <= 0) { showGameOver(); return; }
-        spawnSpider();
+      const respawn = [];
+      for (const sp of spiders) {
+        const dx = ship.x - sp.x;
+        const dy = ship.y - sp.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const fvx = (dx / d) * SPIDER_SPEED;
+        const fvy = (dy / d) * SPIDER_SPEED;
+        sp.knockVx *= decay;
+        sp.knockVy *= decay;
+        sp.x += (fvx + sp.knockVx) * dt;
+        sp.y += (fvy + sp.knockVy) * dt;
+        if (d < ship.hitRadius + SPIDER_HIT_R) {
+          lives -= 1;
+          livesEl.textContent = lives;
+          explode(sp.x, sp.y, '#ff5050', 22);
+          if (lives <= 0) { showGameOver(); return; }
+          sp.dead = true;
+          respawn.push(true);
+        }
       }
+      spiders = spiders.filter(sp => !sp.dead);
+      for (let i = 0; i < respawn.length; i++) spawnSpider();
     }
 
     const desiredActive = Math.min(MAX_ACTIVE_FLIES, 2 + Math.floor(elapsed / 8000));
@@ -574,15 +584,18 @@
         }
       }
       if (!b.dead) {
-        const dx = b.x - spider.x;
-        const dy = b.y - spider.y;
-        if (Math.hypot(dx, dy) < SPIDER_HIT_R) {
-          b.dead = true;
-          const len = Math.hypot(b.vx, b.vy) || 1;
-          spider.knockVx += (b.vx / len) * KNOCKBACK_SPEED * 0.6;
-          spider.knockVy += (b.vy / len) * KNOCKBACK_SPEED * 0.6;
-          score += 2;
-          explode(b.x, b.y, '#9aff70', 8);
+        for (const sp of spiders) {
+          const dx = b.x - sp.x;
+          const dy = b.y - sp.y;
+          if (Math.hypot(dx, dy) < SPIDER_HIT_R) {
+            b.dead = true;
+            const len = Math.hypot(b.vx, b.vy) || 1;
+            sp.knockVx += (b.vx / len) * KNOCKBACK_SPEED * 0.6;
+            sp.knockVy += (b.vy / len) * KNOCKBACK_SPEED * 0.6;
+            score += 2;
+            explode(b.x, b.y, '#9aff70', 8);
+            break;
+          }
         }
       }
       if (b.x < -60 || b.x > W + 60 || b.y < -60 || b.y > H + 60) b.dead = true;
@@ -614,18 +627,18 @@
         }
       }
 
-      {
-        const dx = spider.x - catWorldX;
-        const dy = spider.y - catWorldY;
+      for (const sp of spiders) {
+        const dx = sp.x - catWorldX;
+        const dy = sp.y - catWorldY;
         const dist = Math.hypot(dx, dy);
         if (dist <= PARRY_RADIUS) {
           const nx = dx / (dist || 1);
           const ny = dy / (dist || 1);
-          spider.knockVx += nx * KNOCKBACK_SPEED;
-          spider.knockVy += ny * KNOCKBACK_SPEED;
+          sp.knockVx += nx * KNOCKBACK_SPEED;
+          sp.knockVy += ny * KNOCKBACK_SPEED;
           score += 3;
           parry.success = true;
-          explode(spider.x, spider.y, '#9aff70', 12);
+          explode(sp.x, sp.y, '#9aff70', 12);
         }
       }
     }
@@ -809,13 +822,15 @@
       }
     }
 
-    if (spiderImg.complete && spiderImg.naturalWidth > 0) {
-      const ratio = spiderImg.naturalHeight / spiderImg.naturalWidth;
-      const w = SPIDER_W;
-      const h = w * ratio;
-      ctx.drawImage(spiderImg, spider.x - w / 2, spider.y - h / 2, w, h);
-    } else {
-      drawSprite('🕷️', spider.x, spider.y, 60);
+    for (const sp of spiders) {
+      if (spiderImg.complete && spiderImg.naturalWidth > 0) {
+        const ratio = spiderImg.naturalHeight / spiderImg.naturalWidth;
+        const w = SPIDER_W;
+        const h = w * ratio;
+        ctx.drawImage(spiderImg, sp.x - w / 2, sp.y - h / 2, w, h);
+      } else {
+        drawSprite('🕷️', sp.x, sp.y, 60);
+      }
     }
 
     for (const s of shells) {
