@@ -44,7 +44,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    background: url('20260501_164407.jpg') center / cover no-repeat, #2f80b8;
+    background: #2f80b8;
     display: block;
   }
   #controls {
@@ -57,7 +57,16 @@
     background: rgba(255,255,255,0.6);
     border-top: 1px solid rgba(0,0,0,0.08);
   }
-  .left-pad { display: flex; gap: 10px; }
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 60px);
+    grid-template-rows: repeat(3, 60px);
+    gap: 4px;
+  }
+  .dpad .up { grid-column: 2; grid-row: 1; }
+  .dpad .left { grid-column: 1; grid-row: 2; }
+  .dpad .right { grid-column: 3; grid-row: 2; }
+  .dpad .down { grid-column: 2; grid-row: 3; }
   .btn {
     border-radius: 999px;
     border: 2px solid rgba(0,0,0,0.2);
@@ -76,9 +85,9 @@
     transform: scale(0.96);
   }
   .btn.dir {
-    width: 84px;
-    height: 84px;
-    font-size: 32px;
+    width: 60px;
+    height: 60px;
+    font-size: 22px;
   }
   .btn.parry {
     width: 180px;
@@ -99,24 +108,27 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: rgba(255,255,255,0.8);
+    background: rgba(255,255,255,0.85);
     color: #1a2238;
     text-align: center;
     padding: 20px;
     z-index: 10;
+    overflow-y: auto;
   }
-  #overlay h1 { font-size: 32px; margin-bottom: 12px; }
-  #overlay p { font-size: 16px; opacity: 0.85; margin-bottom: 20px; line-height: 1.4; max-width: 420px; }
+  #overlay h1 { font-size: 32px; margin-bottom: 10px; }
+  #overlay p { font-size: 15px; opacity: 0.9; margin-bottom: 14px; line-height: 1.45; max-width: 460px; }
+  #overlay .modeRow { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
   #overlay button {
-    padding: 14px 32px;
-    font-size: 20px;
+    padding: 14px 26px;
+    font-size: 18px;
     font-weight: 700;
     border-radius: 999px;
     border: 2px solid #fff;
-    background: #ff5050;
     color: #fff;
     cursor: pointer;
   }
+  #overlay button.p1 { background: #ff5050; }
+  #overlay button.p2 { background: #2e9b50; }
   #overlay button:active { transform: scale(0.96); }
   .hidden { display: none !important; }
 </style>
@@ -125,20 +137,30 @@
 <div id="wrap">
   <div id="hud">
     <div>Score: <span id="score">0</span></div>
+    <div id="modeLabel"></div>
     <div>Lives: <span id="lives">3</span></div>
   </div>
   <div id="stage">
     <canvas id="game"></canvas>
     <div id="overlay">
       <h1>🐱 Cat Captain ⛵</h1>
-      <p>Flies will swarm and shoot shells at your ship.<br/>Press <b>Space</b> (or the yellow button) <b>just as a shell gets close</b> to swat it back.<br/>Reflected shells take down the flies!</p>
-      <button id="startBtn">Start</button>
+      <p id="overlayMsg">
+        Flies swarm your ship and shoot at the cat. Time your <b>parry</b> — hit Space (or PARRY) just as a shell gets close to swat it back.<br/><br/>
+        <b>1 Player:</b> ←/→ to slide on deck, Space to parry.<br/>
+        <b>2 Player:</b> P1 plays the cat. P2 steers the ship with <b>W A S D</b> to dodge floating mines.
+      </p>
+      <div class="modeRow">
+        <button class="p1" id="start1Btn">1 Player</button>
+        <button class="p2" id="start2Btn">2 Player</button>
+      </div>
     </div>
   </div>
   <div id="controls">
-    <div class="left-pad">
-      <div class="btn dir" id="leftBtn">◀</div>
-      <div class="btn dir" id="rightBtn">▶</div>
+    <div class="dpad">
+      <div class="btn dir up" id="upBtn">▲</div>
+      <div class="btn dir left" id="leftBtn">◀</div>
+      <div class="btn dir right" id="rightBtn">▶</div>
+      <div class="btn dir down" id="downBtn">▼</div>
     </div>
     <div class="btn parry" id="parryBtn">PARRY ⚔️</div>
   </div>
@@ -150,8 +172,14 @@
   const ctx = canvas.getContext('2d');
   const scoreEl = document.getElementById('score');
   const livesEl = document.getElementById('lives');
+  const modeLabelEl = document.getElementById('modeLabel');
   const overlay = document.getElementById('overlay');
-  const startBtn = document.getElementById('startBtn');
+  const overlayMsg = document.getElementById('overlayMsg');
+  const start1Btn = document.getElementById('start1Btn');
+  const start2Btn = document.getElementById('start2Btn');
+
+  const MODE = { SINGLE: 'single', TWO: 'two' };
+  let mode = MODE.SINGLE;
 
   let W = 0, H = 0, dpr = 1;
   function resize() {
@@ -162,16 +190,24 @@
     canvas.width = Math.floor(W * dpr);
     canvas.height = Math.floor(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    center.x = W / 2;
-    center.y = H / 2;
   }
   window.addEventListener('resize', resize);
 
-  const input = { left: false, right: false, parry: false, parryEdge: false };
+  const input = {
+    left: false, right: false, up: false, down: false,
+    parry: false, parryEdge: false,
+    shipUp: false, shipDown: false, shipLeft: false, shipRight: false,
+  };
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = true;
-    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = true;
+    if (e.key === 'ArrowLeft') input.left = true;
+    else if (e.key === 'ArrowRight') input.right = true;
+    else if (e.key === 'ArrowUp') { input.up = true; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { input.down = true; e.preventDefault(); }
+    else if (e.key === 'w' || e.key === 'W') input.shipUp = true;
+    else if (e.key === 's' || e.key === 'S') input.shipDown = true;
+    else if (e.key === 'a' || e.key === 'A') input.shipLeft = true;
+    else if (e.key === 'd' || e.key === 'D') input.shipRight = true;
     else if (e.key === ' ' || e.key === 'Spacebar') {
       if (!input.parry) input.parryEdge = true;
       input.parry = true;
@@ -179,8 +215,14 @@
     }
   });
   window.addEventListener('keyup', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = false;
-    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = false;
+    if (e.key === 'ArrowLeft') input.left = false;
+    else if (e.key === 'ArrowRight') input.right = false;
+    else if (e.key === 'ArrowUp') input.up = false;
+    else if (e.key === 'ArrowDown') input.down = false;
+    else if (e.key === 'w' || e.key === 'W') input.shipUp = false;
+    else if (e.key === 's' || e.key === 'S') input.shipDown = false;
+    else if (e.key === 'a' || e.key === 'A') input.shipLeft = false;
+    else if (e.key === 'd' || e.key === 'D') input.shipRight = false;
     else if (e.key === ' ' || e.key === 'Spacebar') input.parry = false;
   });
 
@@ -206,23 +248,51 @@
   }
   bindButton('leftBtn', 'left');
   bindButton('rightBtn', 'right');
+  bindButton('upBtn', 'up');
+  bindButton('downBtn', 'down');
   bindButton('parryBtn', 'parry');
 
-  const center = { x: 0, y: 0 };
-  const cat = { height: 140, x: 0, speed: 280 };
+  const cat = { height: 140, x: 0, y: 0, speed: 280 };
   const catImg = new Image();
   catImg.src = '0a0e3631-00e4-42fd-b965-db17b21e84dd.png';
+  const bgImg = new Image();
+  bgImg.src = '20260501_164407.jpg';
+  const shipImg = new Image();
+  shipImg.src = 'f20b6253-f8c8-42cc-9ac3-6f13cb625c97.png';
+  const spiderImg = new Image();
+  spiderImg.src = '2f3b1ecf-b8da-4a43-9cbd-bb3777e6aa32.png';
+  const flyImg = new Image();
+  flyImg.src = '2080cc72-76fc-42ee-9608-78f646dd419e.png';
+
+  const ship = { x: 0, y: 0, speed: 240, hitRadius: 110 };
+  const spider = { x: 0, y: 0, knockVx: 0, knockVy: 0 };
   const SHIP_SIZE = 170;
-  const SHIP_HALF = 60;
+  const SHIP_HALF = 130;
+  const SHIP_VHALF = 55;
+  const SHIP_PAD_X = 200;
+  const SHIP_PAD_Y = 160;
+  const CAT_DECK_OFFSET = 24;
   const TOTAL_FLIES = 8;
   const MAX_ACTIVE_FLIES = 4;
-  const PARRY_RADIUS = 90;
+  const PARRY_RADIUS = 120;
   const CAT_HIT_RADIUS = 36;
   const PARRY_DURATION = 140;
   const PARRY_COOLDOWN = 320;
+  const SCROLL_SPEED = 110;
+  const MINE_HIT_R = 22;
+  const MINE_SIZE = 44;
+  const MINE_SPAWN_MIN = 1.1;
+  const MINE_SPAWN_MAX = 2.2;
+  const SPIDER_SPEED = 80;
+  const SPIDER_W = 110;
+  const SPIDER_HIT_R = 32;
+  const SPIDER_SPAWN_DIST = 380;
+  const KNOCKBACK_SPEED = 720;
+  const KNOCKBACK_DECAY = 1.6;
 
   let flies = [];
   let shells = [];
+  let mines = [];
   let particles = [];
   let score = 0;
   let lives = 3;
@@ -231,6 +301,8 @@
   let lastTime = 0;
   let shipBob = 0;
   let totalSpawned = 0;
+  let bgOffset = 0;
+  let mineSpawnTimer = 0;
 
   let parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
 
@@ -238,18 +310,27 @@
     resize();
     flies = [];
     shells = [];
+    mines = [];
     particles = [];
     score = 0;
     lives = 3;
     elapsed = 0;
     cat.x = 0;
+    cat.y = 0;
+    ship.x = W / 2;
+    ship.y = H / 2;
     totalSpawned = 0;
+    bgOffset = 0;
+    mineSpawnTimer = 1.5;
+    spawnSpider();
     parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
     scoreEl.textContent = score;
     livesEl.textContent = lives;
+    modeLabelEl.textContent = mode === MODE.TWO ? '2-Player' : '';
   }
 
-  function start() {
+  function start(m) {
+    mode = m;
     reset();
     overlay.classList.add('hidden');
     running = true;
@@ -257,23 +338,24 @@
     requestAnimationFrame(loop);
   }
 
+  function showOverlay(title, msg) {
+    running = false;
+    overlay.classList.remove('hidden');
+    overlay.querySelector('h1').textContent = title;
+    overlayMsg.innerHTML = msg;
+    start1Btn.textContent = '1 Player';
+    start2Btn.textContent = '2 Player';
+  }
+
   function showGameOver() {
-    running = false;
-    overlay.classList.remove('hidden');
-    overlay.querySelector('h1').textContent = '😿 Ship Sunk';
-    overlay.querySelector('p').innerHTML = `You scored <b>${score}</b>.<br/>Tap Start to set sail again.`;
-    startBtn.textContent = 'Play Again';
+    showOverlay('😿 Ship Sunk', `You scored <b>${score}</b>.<br/>Pick a mode to set sail again.`);
   }
-
   function showWin() {
-    running = false;
-    overlay.classList.remove('hidden');
-    overlay.querySelector('h1').textContent = '🏆 Victory!';
-    overlay.querySelector('p').innerHTML = `All ${TOTAL_FLIES} flies defeated!<br/>Score: <b>${score}</b> · Lives left: <b>${lives}</b>`;
-    startBtn.textContent = 'Play Again';
+    showOverlay('🏆 Victory!', `All ${TOTAL_FLIES} flies defeated!<br/>Score <b>${score}</b> · Lives left <b>${lives}</b>`);
   }
 
-  startBtn.addEventListener('click', start);
+  start1Btn.addEventListener('click', () => start(MODE.SINGLE));
+  start2Btn.addEventListener('click', () => start(MODE.TWO));
 
   function spawnFly() {
     const angle = Math.random() * Math.PI * 2;
@@ -284,26 +366,43 @@
       orbitSpeed: dir * (0.35 + Math.random() * 0.4),
       bob: Math.random() * Math.PI * 2,
       shootTimer: 1500 + Math.random() * 2000,
-      size: 36,
+      size: 60,
       x: 0, y: 0,
     });
   }
 
   function shootShell(fly) {
-    const targetX = center.x + cat.x;
-    const targetY = center.y;
+    const targetX = ship.x + cat.x;
+    const targetY = ship.y;
     const dx = targetX - fly.x;
     const dy = targetY - fly.y;
     const len = Math.hypot(dx, dy) || 1;
     const speed = 170 + Math.min(140, elapsed * 0.006);
     shells.push({
-      x: fly.x,
-      y: fly.y,
+      x: fly.x, y: fly.y,
       vx: (dx / len) * speed,
       vy: (dy / len) * speed,
       reflected: false,
       trail: [],
     });
+  }
+
+  function spawnMine() {
+    mines.push({
+      x: W + 60,
+      y: 60 + Math.random() * (H - 120),
+      bob: Math.random() * Math.PI * 2,
+      dead: false,
+    });
+  }
+
+  function spawnSpider() {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = SPIDER_SPAWN_DIST + Math.random() * 60;
+    spider.x = ship.x + Math.cos(angle) * dist;
+    spider.y = ship.y + Math.sin(angle) * dist;
+    spider.knockVx = 0;
+    spider.knockVy = 0;
   }
 
   function explode(x, y, color, count = 14) {
@@ -328,10 +427,72 @@
 
     if (input.left) cat.x -= cat.speed * dt;
     if (input.right) cat.x += cat.speed * dt;
+    if (input.up) cat.y -= cat.speed * dt;
+    if (input.down) cat.y += cat.speed * dt;
     cat.x = Math.max(-SHIP_HALF, Math.min(SHIP_HALF, cat.x));
+    cat.y = Math.max(-SHIP_VHALF, Math.min(SHIP_VHALF, cat.y));
 
-    const catWorldX = center.x + cat.x;
-    const catWorldY = center.y;
+    if (mode === MODE.TWO) {
+      let mx = 0, my = 0;
+      if (input.shipLeft) mx -= 1;
+      if (input.shipRight) mx += 1;
+      if (input.shipUp) my -= 1;
+      if (input.shipDown) my += 1;
+      if (mx || my) {
+        const len = Math.hypot(mx, my);
+        ship.x += (mx / len) * ship.speed * dt;
+        ship.y += (my / len) * ship.speed * dt;
+      }
+      ship.x = Math.max(SHIP_PAD_X, Math.min(W - SHIP_PAD_X, ship.x));
+      ship.y = Math.max(SHIP_PAD_Y, Math.min(H - SHIP_PAD_Y, ship.y));
+
+      bgOffset += SCROLL_SPEED * dt;
+
+      mineSpawnTimer -= dt;
+      if (mineSpawnTimer <= 0) {
+        spawnMine();
+        mineSpawnTimer = MINE_SPAWN_MIN + Math.random() * (MINE_SPAWN_MAX - MINE_SPAWN_MIN);
+      }
+
+      for (const m of mines) {
+        m.x -= SCROLL_SPEED * dt;
+        m.bob += dt;
+        if (m.x < -80) m.dead = true;
+        const dx = m.x - ship.x;
+        const dy = m.y - ship.y;
+        if (Math.hypot(dx, dy) < MINE_HIT_R + ship.hitRadius) {
+          m.dead = true;
+          lives -= 1;
+          livesEl.textContent = lives;
+          explode(m.x, m.y, '#ff5050', 22);
+          if (lives <= 0) { showGameOver(); return; }
+        }
+      }
+      mines = mines.filter(m => !m.dead);
+    }
+
+    const catWorldX = ship.x + cat.x;
+    const catWorldY = ship.y - CAT_DECK_OFFSET + cat.y;
+
+    {
+      const dx = ship.x - spider.x;
+      const dy = ship.y - spider.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const fvx = (dx / d) * SPIDER_SPEED;
+      const fvy = (dy / d) * SPIDER_SPEED;
+      const decay = Math.exp(-KNOCKBACK_DECAY * dt);
+      spider.knockVx *= decay;
+      spider.knockVy *= decay;
+      spider.x += (fvx + spider.knockVx) * dt;
+      spider.y += (fvy + spider.knockVy) * dt;
+      if (d < ship.hitRadius + SPIDER_HIT_R) {
+        lives -= 1;
+        livesEl.textContent = lives;
+        explode(spider.x, spider.y, '#ff5050', 22);
+        if (lives <= 0) { showGameOver(); return; }
+        spawnSpider();
+      }
+    }
 
     const desiredActive = Math.min(MAX_ACTIVE_FLIES, 2 + Math.floor(elapsed / 8000));
     while (flies.length < desiredActive && totalSpawned < TOTAL_FLIES) {
@@ -343,8 +504,8 @@
       f.angle += f.orbitSpeed * dt;
       f.bob += dt * 2;
       const r = f.radius + Math.sin(f.bob) * 18;
-      f.x = center.x + Math.cos(f.angle) * r;
-      f.y = center.y + Math.sin(f.angle) * r * 0.85;
+      f.x = ship.x + Math.cos(f.angle) * r;
+      f.y = ship.y + Math.sin(f.angle) * r * 0.85;
     }
 
     const hasActiveShell = shells.some(s => !s.reflected);
@@ -391,7 +552,21 @@
           explode(s.x, s.y, '#fff066', 10);
         }
       }
-      if (parry.success) score += 0;
+
+      {
+        const dx = spider.x - catWorldX;
+        const dy = spider.y - catWorldY;
+        const dist = Math.hypot(dx, dy);
+        if (dist <= PARRY_RADIUS) {
+          const nx = dx / (dist || 1);
+          const ny = dy / (dist || 1);
+          spider.knockVx += nx * KNOCKBACK_SPEED;
+          spider.knockVy += ny * KNOCKBACK_SPEED;
+          score += 3;
+          parry.success = true;
+          explode(spider.x, spider.y, '#9aff70', 12);
+        }
+      }
     }
     input.parryEdge = false;
 
@@ -418,7 +593,6 @@
           s.dead = true;
           f.dead = true;
           score += 25;
-          scoreEl.textContent = score;
           explode(f.x, f.y, '#9aff70', 16);
           break;
         }
@@ -429,13 +603,11 @@
       if (s.x < -60 || s.x > W + 60 || s.y < -60 || s.y > H + 60) s.dead = true;
     }
 
-    if (parry.success) scoreEl.textContent = score;
-
+    scoreEl.textContent = score;
     shells = shells.filter(s => !s.dead);
     flies = flies.filter(f => !f.dead);
 
     if (totalSpawned >= TOTAL_FLIES && flies.length === 0) {
-      scoreEl.textContent = score;
       showWin();
       return;
     }
@@ -458,31 +630,72 @@
     ctx.fillText(emoji, x, y);
   }
 
-  function drawWaves() {
-    const horizonY = center.y + 30;
-    ctx.save();
-    ctx.globalAlpha = 0.5;
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 4; i++) {
-      const y = horizonY + i * 28 + Math.sin(shipBob * 1.2 + i) * 3;
-      ctx.beginPath();
-      for (let x = 0; x <= W; x += 24) {
-        const wy = y + Math.sin((x + shipBob * 60 + i * 40) * 0.04) * 4;
-        if (x === 0) ctx.moveTo(x, wy);
-        else ctx.lineTo(x, wy);
+  function drawBackground() {
+    if (!bgImg.complete || !bgImg.naturalWidth) {
+      ctx.fillStyle = '#2f80b8';
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+    const iR = bgImg.naturalWidth / bgImg.naturalHeight;
+    if (mode === MODE.TWO) {
+      const drawH = H;
+      const drawW = drawH * iR;
+      const startX = -((bgOffset % drawW + drawW) % drawW);
+      for (let x = startX; x < W; x += drawW) {
+        ctx.drawImage(bgImg, x, 0, drawW, drawH);
       }
+    } else {
+      const sR = W / H;
+      let dW, dH;
+      if (sR > iR) { dW = W; dH = W / iR; }
+      else { dH = H; dW = H * iR; }
+      const dx = (W - dW) / 2;
+      const dy = (H - dH) / 2;
+      ctx.drawImage(bgImg, dx, dy, dW, dH);
+    }
+  }
+
+  function drawMine(x, y, bob) {
+    const r = MINE_HIT_R;
+    ctx.save();
+    ctx.translate(x, y + Math.sin(bob * 2) * 2);
+    ctx.strokeStyle = '#0e0e10';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + bob * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      ctx.lineTo(Math.cos(a) * (r + 9), Math.sin(a) * (r + 9));
       ctx.stroke();
     }
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#191919';
+    ctx.fill();
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-r * 0.35, -r * 0.35, r * 0.22, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(r * 0.4, r * 0.05, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff3030';
+    ctx.fill();
     ctx.restore();
   }
 
   function render() {
     ctx.clearRect(0, 0, W, H);
+    drawBackground();
+
+    for (const m of mines) drawMine(m.x, m.y, m.bob);
 
     const bobY = Math.sin(shipBob * 1.6) * 4;
-    const catScreenX = center.x + cat.x;
-    const catScreenY = center.y + bobY;
+    const catScreenX = ship.x + cat.x;
+    const catScreenY = ship.y - CAT_DECK_OFFSET + cat.y + bobY;
 
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.35)';
@@ -494,7 +707,20 @@
     ctx.setLineDash([]);
     ctx.restore();
 
-    drawSprite('⛵', center.x, center.y + bobY + 18, SHIP_SIZE);
+    if (shipImg.complete && shipImg.naturalWidth > 0) {
+      const shipW = 460;
+      const shipH = shipW * (shipImg.naturalHeight / shipImg.naturalWidth);
+      const sx = ship.x;
+      const sy = ship.y + bobY + 10;
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, shipW * 0.49, shipH * 0.46, 0, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(shipImg, sx - shipW / 2, sy - shipH / 2, shipW, shipH);
+      ctx.restore();
+    } else {
+      drawSprite('⛵', ship.x, ship.y + bobY + 18, SHIP_SIZE);
+    }
 
     if (catImg.complete && catImg.naturalWidth > 0) {
       const h = cat.height;
@@ -511,7 +737,23 @@
     }
 
     for (const f of flies) {
-      drawSprite('🪰', f.x, f.y, f.size);
+      if (flyImg.complete && flyImg.naturalWidth > 0) {
+        const ratio = flyImg.naturalHeight / flyImg.naturalWidth;
+        const w = f.size;
+        const h = w * ratio;
+        ctx.drawImage(flyImg, f.x - w / 2, f.y - h / 2, w, h);
+      } else {
+        drawSprite('🪰', f.x, f.y, f.size);
+      }
+    }
+
+    if (spiderImg.complete && spiderImg.naturalWidth > 0) {
+      const ratio = spiderImg.naturalHeight / spiderImg.naturalWidth;
+      const w = SPIDER_W;
+      const h = w * ratio;
+      ctx.drawImage(spiderImg, spider.x - w / 2, spider.y - h / 2, w, h);
+    } else {
+      drawSprite('🕷️', spider.x, spider.y, 60);
     }
 
     for (const s of shells) {
