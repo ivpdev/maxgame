@@ -145,7 +145,7 @@
     <div id="overlay">
       <h1>🐱 Cat Captain ⛵</h1>
       <p id="overlayMsg">
-        Flies swarm your ship and shoot at the cat. Time your <b>parry</b> — hit Space (or PARRY) just as a shell gets close to swat it back.<br/><br/>
+        Flies swarm your ship and shoot at the cat. Time your <b>parry</b> — hit Space (or PARRY) just as a shell gets close to swat it back. Defeat all flies <b>and</b> kill 3 spiders to win.<br/><br/>
         <b>1 Player:</b> ←/→ to slide on deck, Space to parry.<br/>
         <b>2 Player:</b> P1 plays the cat. P2 steers the ship with <b>W A S D</b> to dodge floating mines.
       </p>
@@ -296,6 +296,9 @@
   const SPIDER_W = 110;
   const SPIDER_HIT_R = 32;
   const SPIDER_SPAWN_DIST = 380;
+  const SPIDER_VLINE_TOL = 60;
+  const SPIDER_KILL_HITS = 20;
+  const TOTAL_SPIDERS = 3;
   const KNOCKBACK_SPEED = 720;
   const KNOCKBACK_DECAY = 1.6;
   const CAT_SHOT_SPEED = 520;
@@ -315,6 +318,7 @@
   let lastTime = 0;
   let shipBob = 0;
   let totalSpawned = 0;
+  let spidersKilled = 0;
   let bgOffset = 0;
   let mineSpawnTimer = 0;
 
@@ -336,6 +340,7 @@
     ship.x = W / 2;
     ship.y = H / 2;
     totalSpawned = 0;
+    spidersKilled = 0;
     bgOffset = 0;
     mineSpawnTimer = 1.5;
     spiders = [];
@@ -343,7 +348,7 @@
     parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
     scoreEl.textContent = score;
     livesEl.textContent = lives;
-    modeLabelEl.textContent = mode === MODE.TWO ? '2-Player' : '';
+    updateModeLabel();
   }
 
   function start(m) {
@@ -368,7 +373,12 @@
     showOverlay('😿 Ship Sunk', `You scored <b>${score}</b>.<br/>Pick a mode to set sail again.`);
   }
   function showWin() {
-    showOverlay('🏆 Victory!', `All ${TOTAL_FLIES} flies defeated!<br/>Score <b>${score}</b> · Lives left <b>${lives}</b>`);
+    showOverlay('🏆 Victory!', `All ${TOTAL_FLIES} flies and ${TOTAL_SPIDERS} spiders defeated!<br/>Score <b>${score}</b> · Lives left <b>${lives}</b>`);
+  }
+
+  function updateModeLabel() {
+    const spiderProgress = `🕷️ ${spidersKilled}/${TOTAL_SPIDERS}`;
+    modeLabelEl.textContent = mode === MODE.TWO ? `2-Player · ${spiderProgress}` : spiderProgress;
   }
 
   start1Btn.addEventListener('click', () => start(MODE.SINGLE));
@@ -425,6 +435,7 @@
       y: ship.y + Math.sin(angle) * dist,
       knockVx: 0,
       knockVy: 0,
+      hits: 0,
     });
   }
 
@@ -520,7 +531,32 @@
         }
       }
       spiders = spiders.filter(sp => !sp.dead);
-      for (let i = 0; i < respawn.length; i++) spawnSpider();
+      for (let i = 0; i < respawn.length; i++) {
+        if (spidersKilled < TOTAL_SPIDERS) spawnSpider();
+      }
+
+      if (spiders.length === 2) {
+        const [s0, s1] = spiders;
+        const verticallyAligned =
+          Math.abs(s0.x - ship.x) < SPIDER_VLINE_TOL &&
+          Math.abs(s1.x - ship.x) < SPIDER_VLINE_TOL;
+        if (verticallyAligned) {
+          const top = s0.y < s1.y ? s0 : s1;
+          const bottom = top === s0 ? s1 : s0;
+          const left = Math.random() < 0.5 ? top : bottom;
+          const right = left === top ? bottom : top;
+          const distL = SPIDER_SPAWN_DIST + Math.random() * 60;
+          const distR = SPIDER_SPAWN_DIST + Math.random() * 60;
+          left.x = ship.x - distL;
+          left.y = ship.y;
+          left.knockVx = 0; left.knockVy = 0;
+          right.x = ship.x + distR;
+          right.y = ship.y;
+          right.knockVx = 0; right.knockVy = 0;
+          explode(left.x, left.y, '#aaccff', 10);
+          explode(right.x, right.y, '#aaccff', 10);
+        }
+      }
     }
 
     const desiredActive = Math.min(MAX_ACTIVE_FLIES, 2 + Math.floor(elapsed / 8000));
@@ -627,6 +663,7 @@
         }
       }
 
+      let spiderKilled = false;
       for (const sp of spiders) {
         const dx = sp.x - catWorldX;
         const dy = sp.y - catWorldY;
@@ -636,10 +673,23 @@
           const ny = dy / (dist || 1);
           sp.knockVx += nx * KNOCKBACK_SPEED;
           sp.knockVy += ny * KNOCKBACK_SPEED;
+          sp.hits += 1;
           score += 3;
           parry.success = true;
           explode(sp.x, sp.y, '#9aff70', 12);
+          if (sp.hits >= SPIDER_KILL_HITS) {
+            sp.dead = true;
+            spiderKilled = true;
+            spidersKilled += 1;
+            score += 50;
+            explode(sp.x, sp.y, '#ffd24a', 28);
+          }
         }
+      }
+      if (spiderKilled) {
+        spiders = spiders.filter(sp => !sp.dead);
+        while (spiders.length < SPIDER_COUNT && spidersKilled < TOTAL_SPIDERS) spawnSpider();
+        updateModeLabel();
       }
     }
     input.parryEdge = false;
@@ -681,7 +731,7 @@
     shells = shells.filter(s => !s.dead);
     flies = flies.filter(f => !f.dead);
 
-    if (totalSpawned >= TOTAL_FLIES && flies.length === 0) {
+    if (totalSpawned >= TOTAL_FLIES && flies.length === 0 && spidersKilled >= TOTAL_SPIDERS) {
       showWin();
       return;
     }
@@ -823,14 +873,29 @@
     }
 
     for (const sp of spiders) {
+      let spriteH = 60;
       if (spiderImg.complete && spiderImg.naturalWidth > 0) {
         const ratio = spiderImg.naturalHeight / spiderImg.naturalWidth;
         const w = SPIDER_W;
         const h = w * ratio;
+        spriteH = h;
         ctx.drawImage(spiderImg, sp.x - w / 2, sp.y - h / 2, w, h);
       } else {
         drawSprite('🕷️', sp.x, sp.y, 60);
       }
+      const remaining = Math.max(0, SPIDER_KILL_HITS - sp.hits);
+      const frac = remaining / SPIDER_KILL_HITS;
+      const barW = 64;
+      const barH = 6;
+      const barX = sp.x - barW / 2;
+      const barY = sp.y - spriteH / 2 - 12;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+      ctx.fillStyle = '#3a3a3a';
+      ctx.fillRect(barX, barY, barW, barH);
+      const fillColor = frac > 0.5 ? '#7be07b' : frac > 0.25 ? '#ffd24a' : '#ff5050';
+      ctx.fillStyle = fillColor;
+      ctx.fillRect(barX, barY, barW * frac, barH);
     }
 
     for (const s of shells) {
