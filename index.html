@@ -130,6 +130,29 @@
   #overlay button.p1 { background: #ff5050; }
   #overlay button.p2 { background: #2e9b50; }
   #overlay button:active { transform: scale(0.96); }
+  #worldGrid {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 4px;
+    max-width: 720px;
+  }
+  .worldCard {
+    background: rgba(255,255,255,0.7);
+    border: 2px solid rgba(0,0,0,0.08);
+    border-radius: 16px;
+    padding: 16px;
+    flex: 1 1 280px;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .worldCard h2 { font-size: 20px; margin-bottom: 6px; }
+  .worldCard p { font-size: 13px; margin-bottom: 12px; opacity: 0.85; }
+  .worldCard .modeRow { margin-top: auto; display: flex; gap: 10px; }
+  .worldCard button { padding: 10px 18px; font-size: 15px; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -145,13 +168,27 @@
     <div id="overlay">
       <h1>🐱 Cat Captain ⛵</h1>
       <p id="overlayMsg">
-        Flies swarm your ship and shoot at the cat. Time your <b>parry</b> — hit Space (or PARRY) just as a shell gets close to swat it back. Defeat all flies <b>and</b> kill 3 spiders to win.<br/><br/>
+        Enemies swarm your ship and shoot at the cat. Time your <b>parry</b> — hit Space (or PARRY) just as a shot gets close to swat it back. Wipe out the swarm and kill 3 bosses to win.<br/><br/>
         <b>1 Player:</b> ←/→ to slide on deck, Space to parry.<br/>
-        <b>2 Player:</b> P1 plays the cat. P2 steers the ship with <b>W A S D</b> to dodge floating mines.
+        <b>2 Player:</b> P1 plays the cat. P2 steers the ship with <b>W A S D</b> to dodge hazards.
       </p>
-      <div class="modeRow">
-        <button class="p1" id="start1Btn">1 Player</button>
-        <button class="p2" id="start2Btn">2 Player</button>
+      <div id="worldGrid">
+        <div class="worldCard">
+          <h2>⛵ World 1 — High Seas</h2>
+          <p>Parry fly shells on the open ocean. Squash spiders, dodge mines.</p>
+          <div class="modeRow">
+            <button class="p1" data-world="1" data-mode="single">1 Player</button>
+            <button class="p2" data-world="1" data-mode="two">2 Player</button>
+          </div>
+        </div>
+        <div class="worldCard">
+          <h2>🦀 World 2 — Crab Cove</h2>
+          <p>Crabs scuttle in close, then stop and shoot when their eye glows red. Parry the rush and the shots.</p>
+          <div class="modeRow">
+            <button class="p1" data-world="2" data-mode="single">1 Player</button>
+            <button class="p2" data-world="2" data-mode="two">2 Player</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -175,11 +212,9 @@
   const modeLabelEl = document.getElementById('modeLabel');
   const overlay = document.getElementById('overlay');
   const overlayMsg = document.getElementById('overlayMsg');
-  const start1Btn = document.getElementById('start1Btn');
-  const start2Btn = document.getElementById('start2Btn');
-
   const MODE = { SINGLE: 'single', TWO: 'two' };
   let mode = MODE.SINGLE;
+  let world = 1;
 
   let W = 0, H = 0, dpr = 1;
   function resize() {
@@ -271,6 +306,14 @@
   flyImg.src = '2080cc72-76fc-42ee-9608-78f646dd419e.png';
   const fastFlyImg = new Image();
   fastFlyImg.src = 'aedda06f-f800-45ea-b770-d4077188ffc8.png';
+  const crabImg = new Image();
+  crabImg.src = '7a59726c-d978-4bd1-8c7c-eaa3a4cd8a0c.png';
+  const bg2Img = new Image();
+  bg2Img.src = '20260501_165822.jpg';
+  const treeImg = new Image();
+  treeImg.src = 'assets/tree/tree3.png';
+  const clampsImg = new Image();
+  clampsImg.src = 'assets/clamps.png';
 
   const ship = { x: 0, y: 0, speed: 240, hitRadius: 110 };
   const SPIDER_COUNT = 2;
@@ -323,6 +366,25 @@
   let mineSpawnTimer = 0;
 
   let parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
+  let tree = { age: 0 };
+  let treeRing = null;
+
+  const TREE_MATURE = 10;
+  const TREE_PARRY_BASE = 80;
+  const TREE_PARRY_PER_SEC = 38;
+  const TREE_RENDER_DROP = 60;
+
+  const CLAMP_SPAWN_MIN = 3;
+  const CLAMP_SPAWN_MAX = 6;
+  const CLAMP_LIFETIME = 10;
+  const CLAMP_DISPLAY_H = 140;
+  const CLAMP_RADIUS = 160;
+  const CLAMP_SRC = [
+    { sx: 0, sw: 950 },
+    { sx: 2050, sw: 982 },
+  ];
+  let clamps = [];
+  let clampSpawnTimer = 3;
 
   function reset() {
     resize();
@@ -346,12 +408,17 @@
     spiders = [];
     for (let i = 0; i < SPIDER_COUNT; i++) spawnSpider();
     parry = { activeUntil: 0, cooldownUntil: 0, success: false, ringT: 0 };
+    tree = { age: 0 };
+    treeRing = null;
+    clamps = [];
+    clampSpawnTimer = 3;
     scoreEl.textContent = score;
     livesEl.textContent = lives;
     updateModeLabel();
   }
 
-  function start(m) {
+  function start(w, m) {
+    world = w;
     mode = m;
     reset();
     overlay.classList.add('hidden');
@@ -365,24 +432,31 @@
     overlay.classList.remove('hidden');
     overlay.querySelector('h1').textContent = title;
     overlayMsg.innerHTML = msg;
-    start1Btn.textContent = '1 Player';
-    start2Btn.textContent = '2 Player';
   }
 
   function showGameOver() {
     showOverlay('😿 Ship Sunk', `You scored <b>${score}</b>.<br/>Pick a mode to set sail again.`);
   }
   function showWin() {
-    showOverlay('🏆 Victory!', `All ${TOTAL_FLIES} flies and ${TOTAL_SPIDERS} spiders defeated!<br/>Score <b>${score}</b> · Lives left <b>${lives}</b>`);
+    const enemyText = world === 2
+      ? `All ${TOTAL_SPIDERS} crabs defeated!`
+      : `All ${TOTAL_FLIES} flies and ${TOTAL_SPIDERS} spiders defeated!`;
+    showOverlay('🏆 Victory!', `${enemyText}<br/>Score <b>${score}</b> · Lives left <b>${lives}</b>`);
   }
 
   function updateModeLabel() {
-    const spiderProgress = `🕷️ ${spidersKilled}/${TOTAL_SPIDERS}`;
-    modeLabelEl.textContent = mode === MODE.TWO ? `2-Player · ${spiderProgress}` : spiderProgress;
+    const bossIcon = world === 2 ? '🦀' : '🕷️';
+    const bossProgress = `${bossIcon} ${spidersKilled}/${TOTAL_SPIDERS}`;
+    modeLabelEl.textContent = mode === MODE.TWO ? `2-Player · ${bossProgress}` : bossProgress;
   }
 
-  start1Btn.addEventListener('click', () => start(MODE.SINGLE));
-  start2Btn.addEventListener('click', () => start(MODE.TWO));
+  overlay.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-world]');
+    if (!btn) return;
+    const w = parseInt(btn.dataset.world, 10);
+    const m = btn.dataset.mode === 'two' ? MODE.TWO : MODE.SINGLE;
+    start(w, m);
+  });
 
   function spawnFly() {
     const angle = Math.random() * Math.PI * 2;
@@ -430,13 +504,103 @@
   function spawnSpider() {
     const angle = Math.random() * Math.PI * 2;
     const dist = SPIDER_SPAWN_DIST + Math.random() * 60;
-    spiders.push({
+    const sp = {
       x: ship.x + Math.cos(angle) * dist,
       y: ship.y + Math.sin(angle) * dist,
       knockVx: 0,
       knockVy: 0,
       hits: 0,
+      maxHits: world === 2 ? 10 : SPIDER_KILL_HITS,
+    };
+    if (world === 2) {
+      sp.kind = 'crab';
+      sp.eyeState = 'normal';
+      sp.eyeTimer = 1.8 + Math.random() * 2.2;
+      sp.shootTimer = 0.8;
+    }
+    spiders.push(sp);
+  }
+
+  function spawnClamp() {
+    const occupied = new Set(clamps.filter(c => !c.dead).map(c => c.side));
+    const available = [0, 1].filter(s => !occupied.has(s));
+    if (available.length === 0) return;
+    const side = available[Math.floor(Math.random() * available.length)];
+    clamps.push({
+      side,
+      angle: side === 0 ? Math.PI : 0,
+      variant: side,
+      age: 0,
+      dead: false,
     });
+  }
+
+  function clampPos(c) {
+    return {
+      x: ship.x + Math.cos(c.angle) * CLAMP_RADIUS,
+      y: ship.y + Math.sin(c.angle) * CLAMP_RADIUS,
+    };
+  }
+
+  function treePos() {
+    return { x: ship.x, y: ship.y - CAT_DECK_OFFSET + SHIP_VHALF - 4 };
+  }
+  function treeFoliageR(age) {
+    return 6 + Math.min(age, TREE_MATURE) * 3;
+  }
+  function explodeTree() {
+    const t = treePos();
+    const grown = Math.min(tree.age, TREE_MATURE);
+    const r = TREE_PARRY_BASE + grown * TREE_PARRY_PER_SEC;
+    for (const s of shells) {
+      if (s.reflected || s.dead) continue;
+      const dx = s.x - t.x;
+      const dy = s.y - t.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= r) {
+        const len = Math.hypot(s.vx, s.vy) || 1;
+        const nx = dx / (dist || 1);
+        const ny = dy / (dist || 1);
+        const speed = len * 1.35;
+        s.vx = nx * speed;
+        s.vy = ny * speed;
+        s.reflected = true;
+        score += 5;
+        explode(s.x, s.y, '#fff066', 10);
+      }
+    }
+    let killed = false;
+    for (const sp of spiders) {
+      if (sp.dead) continue;
+      const dx = sp.x - t.x;
+      const dy = sp.y - t.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= r) {
+        const nx = dx / (dist || 1);
+        const ny = dy / (dist || 1);
+        sp.knockVx += nx * KNOCKBACK_SPEED * 1.2;
+        sp.knockVy += ny * KNOCKBACK_SPEED * 1.2;
+        sp.hits += 2;
+        score += 6;
+        explode(sp.x, sp.y, '#9aff70', 14);
+        if (sp.hits >= sp.maxHits) {
+          sp.dead = true;
+          killed = true;
+          spidersKilled += 1;
+          score += 50;
+          explode(sp.x, sp.y, '#ffd24a', 28);
+        }
+      }
+    }
+    if (killed) {
+      spiders = spiders.filter(sp => !sp.dead);
+      while (spiders.length < SPIDER_COUNT && spidersKilled < TOTAL_SPIDERS) spawnSpider();
+      updateModeLabel();
+    }
+    treeRing = { x: t.x, y: t.y, maxR: r, t: 1 };
+    explode(t.x, t.y, '#7be07b', 26);
+    explode(t.x, t.y, '#ffd24a', 18);
+    tree.age = 0;
   }
 
   function explode(x, y, color, count = 14) {
@@ -512,15 +676,48 @@
       const decay = Math.exp(-KNOCKBACK_DECAY * dt);
       const respawn = [];
       for (const sp of spiders) {
+        sp.knockVx *= decay;
+        sp.knockVy *= decay;
         const dx = ship.x - sp.x;
         const dy = ship.y - sp.y;
         const d = Math.hypot(dx, dy) || 1;
-        const fvx = (dx / d) * SPIDER_SPEED;
-        const fvy = (dy / d) * SPIDER_SPEED;
-        sp.knockVx *= decay;
-        sp.knockVy *= decay;
-        sp.x += (fvx + sp.knockVx) * dt;
-        sp.y += (fvy + sp.knockVy) * dt;
+        if (sp.kind === 'crab') {
+          sp.eyeTimer -= dt;
+          if (sp.eyeTimer <= 0) {
+            if (sp.eyeState === 'normal') {
+              sp.eyeState = 'red';
+              sp.eyeTimer = 1.6 + Math.random() * 1.4;
+              sp.shootTimer = 0.45 + Math.random() * 0.3;
+            } else {
+              sp.eyeState = 'normal';
+              sp.eyeTimer = 1.8 + Math.random() * 2.2;
+            }
+          }
+          if (sp.eyeState === 'normal') {
+            const fvx = (dx / d) * SPIDER_SPEED;
+            const fvy = (dy / d) * SPIDER_SPEED;
+            sp.x += (fvx + sp.knockVx) * dt;
+            sp.y += (fvy + sp.knockVy) * dt;
+          } else {
+            sp.x += sp.knockVx * dt;
+            sp.y += sp.knockVy * dt;
+            sp.shootTimer -= dt;
+            if (sp.shootTimer <= 0) {
+              const hasActiveShell = shells.some(s => !s.reflected);
+              if (!hasActiveShell) {
+                shootShell({ x: sp.x, y: sp.y - 10 });
+                sp.shootTimer = 0.9 + Math.random() * 0.6;
+              } else {
+                sp.shootTimer = 0.15;
+              }
+            }
+          }
+        } else {
+          const fvx = (dx / d) * SPIDER_SPEED;
+          const fvy = (dy / d) * SPIDER_SPEED;
+          sp.x += (fvx + sp.knockVx) * dt;
+          sp.y += (fvy + sp.knockVy) * dt;
+        }
         if (d < ship.hitRadius + SPIDER_HIT_R) {
           lives -= 1;
           livesEl.textContent = lives;
@@ -559,10 +756,32 @@
       }
     }
 
-    const desiredActive = Math.min(MAX_ACTIVE_FLIES, 2 + Math.floor(elapsed / 8000));
-    while (flies.length < desiredActive && totalSpawned < TOTAL_FLIES) {
-      spawnFly();
-      totalSpawned++;
+    if (world === 2) {
+      tree.age += dt;
+      const t = treePos();
+      const reach = treeFoliageR(tree.age) + 8;
+      if (tree.age > 0.25 && Math.hypot(catWorldX - t.x, catWorldY - t.y) < reach) {
+        explodeTree();
+      }
+
+      clampSpawnTimer -= dt;
+      if (clampSpawnTimer <= 0) {
+        spawnClamp();
+        clampSpawnTimer = CLAMP_SPAWN_MIN + Math.random() * (CLAMP_SPAWN_MAX - CLAMP_SPAWN_MIN);
+      }
+      for (const c of clamps) {
+        c.age += dt;
+        if (c.age >= CLAMP_LIFETIME) c.dead = true;
+      }
+      clamps = clamps.filter(c => !c.dead);
+    }
+
+    if (world !== 2) {
+      const desiredActive = Math.min(MAX_ACTIVE_FLIES, 2 + Math.floor(elapsed / 8000));
+      while (flies.length < desiredActive && totalSpawned < TOTAL_FLIES) {
+        spawnFly();
+        totalSpawned++;
+      }
     }
 
     for (const f of flies) {
@@ -677,7 +896,7 @@
           score += 3;
           parry.success = true;
           explode(sp.x, sp.y, '#9aff70', 12);
-          if (sp.hits >= SPIDER_KILL_HITS) {
+          if (sp.hits >= sp.maxHits) {
             sp.dead = true;
             spiderKilled = true;
             spidersKilled += 1;
@@ -691,6 +910,20 @@
         while (spiders.length < SPIDER_COUNT && spidersKilled < TOTAL_SPIDERS) spawnSpider();
         updateModeLabel();
       }
+
+      for (const c of clamps) {
+        if (c.dead) continue;
+        const cp = clampPos(c);
+        const dx = cp.x - catWorldX;
+        const dy = cp.y - catWorldY;
+        if (Math.hypot(dx, dy) <= PARRY_RADIUS) {
+          c.dead = true;
+          score += 8;
+          parry.success = true;
+          explode(cp.x, cp.y, '#ffaadd', 18);
+        }
+      }
+      clamps = clamps.filter(c => !c.dead);
     }
     input.parryEdge = false;
 
@@ -707,8 +940,32 @@
       }
     }
 
+    let reflectedKilled = false;
     for (const s of shells) {
       if (!s.reflected || s.dead) continue;
+      for (const sp of spiders) {
+        if (sp.dead) continue;
+        const dx = s.x - sp.x;
+        const dy = s.y - sp.y;
+        if (Math.hypot(dx, dy) < SPIDER_HIT_R) {
+          s.dead = true;
+          const len = Math.hypot(s.vx, s.vy) || 1;
+          sp.knockVx += (s.vx / len) * KNOCKBACK_SPEED * 0.6;
+          sp.knockVy += (s.vy / len) * KNOCKBACK_SPEED * 0.6;
+          sp.hits += 1;
+          score += 5;
+          explode(s.x, s.y, '#9aff70', 12);
+          if (sp.hits >= sp.maxHits) {
+            sp.dead = true;
+            reflectedKilled = true;
+            spidersKilled += 1;
+            score += 50;
+            explode(sp.x, sp.y, '#ffd24a', 28);
+          }
+          break;
+        }
+      }
+      if (s.dead) continue;
       for (const f of flies) {
         if (f.dead) continue;
         const dx = s.x - f.x;
@@ -723,6 +980,12 @@
       }
     }
 
+    if (reflectedKilled) {
+      spiders = spiders.filter(sp => !sp.dead);
+      while (spiders.length < SPIDER_COUNT && spidersKilled < TOTAL_SPIDERS) spawnSpider();
+      updateModeLabel();
+    }
+
     for (const s of shells) {
       if (s.x < -60 || s.x > W + 60 || s.y < -60 || s.y > H + 60) s.dead = true;
     }
@@ -731,7 +994,8 @@
     shells = shells.filter(s => !s.dead);
     flies = flies.filter(f => !f.dead);
 
-    if (totalSpawned >= TOTAL_FLIES && flies.length === 0 && spidersKilled >= TOTAL_SPIDERS) {
+    const flyTarget = world === 2 ? 0 : TOTAL_FLIES;
+    if (totalSpawned >= flyTarget && flies.length === 0 && spidersKilled >= TOTAL_SPIDERS) {
       showWin();
       return;
     }
@@ -745,6 +1009,10 @@
     particles = particles.filter(p => p.age < p.life);
 
     if (parry.ringT > 0) parry.ringT = Math.max(0, parry.ringT - dt / (PARRY_DURATION / 1000));
+    if (treeRing) {
+      treeRing.t = Math.max(0, treeRing.t - dt * 1.6);
+      if (treeRing.t <= 0) treeRing = null;
+    }
   }
 
   function drawSprite(emoji, x, y, size) {
@@ -755,18 +1023,19 @@
   }
 
   function drawBackground() {
-    if (!bgImg.complete || !bgImg.naturalWidth) {
+    const img = world === 2 ? bg2Img : bgImg;
+    if (!img.complete || !img.naturalWidth) {
       ctx.fillStyle = '#2f80b8';
       ctx.fillRect(0, 0, W, H);
       return;
     }
-    const iR = bgImg.naturalWidth / bgImg.naturalHeight;
+    const iR = img.naturalWidth / img.naturalHeight;
     if (mode === MODE.TWO) {
       const drawH = H;
       const drawW = drawH * iR;
       const startX = -((bgOffset % drawW + drawW) % drawW);
       for (let x = startX; x < W; x += drawW) {
-        ctx.drawImage(bgImg, x, 0, drawW, drawH);
+        ctx.drawImage(img, x, 0, drawW, drawH);
       }
     } else {
       const sR = W / H;
@@ -775,7 +1044,7 @@
       else { dH = H; dW = H * iR; }
       const dx = (W - dW) / 2;
       const dy = (H - dH) / 2;
-      ctx.drawImage(bgImg, dx, dy, dW, dH);
+      ctx.drawImage(img, dx, dy, dW, dH);
     }
   }
 
@@ -809,6 +1078,40 @@
     ctx.fillStyle = '#ff3030';
     ctx.fill();
     ctx.restore();
+  }
+
+  function drawClamps(bobY) {
+    if (!clampsImg.complete || !clampsImg.naturalWidth) return;
+    const sh = clampsImg.naturalHeight;
+    for (const c of clamps) {
+      const v = CLAMP_SRC[c.variant] || CLAMP_SRC[0];
+      const aspect = v.sw / sh;
+      const h = CLAMP_DISPLAY_H;
+      const w = h * aspect;
+      const cx = ship.x + Math.cos(c.angle) * CLAMP_RADIUS;
+      const cy = ship.y + bobY + Math.sin(c.angle) * CLAMP_RADIUS;
+      let alpha = 1;
+      if (c.age < 0.3) alpha = c.age / 0.3;
+      else if (c.age > CLAMP_LIFETIME - 0.6) alpha = (CLAMP_LIFETIME - c.age) / 0.6;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+      ctx.translate(cx, cy);
+      ctx.rotate(c.angle - Math.PI / 2);
+      ctx.drawImage(clampsImg, v.sx, 0, v.sw, sh, -w / 2, 0, w, h);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawTree(x, y, age) {
+    if (!treeImg.complete || !treeImg.naturalWidth) return;
+    const p = Math.min(age / TREE_MATURE, 1);
+    const minScale = 0.15;
+    const scale = minScale + (1 - minScale) * p;
+    const fullH = 140;
+    const h = fullH * scale;
+    const w = h * (treeImg.naturalWidth / treeImg.naturalHeight);
+    ctx.drawImage(treeImg, x - w / 2, y - h, w, h);
   }
 
   function render() {
@@ -846,6 +1149,12 @@
       drawSprite('⛵', ship.x, ship.y + bobY + 18, SHIP_SIZE);
     }
 
+    if (world === 2) {
+      drawClamps(bobY);
+      const tp = treePos();
+      drawTree(tp.x, tp.y + bobY + TREE_RENDER_DROP, tree.age);
+    }
+
     if (catImg.complete && catImg.naturalWidth > 0) {
       const h = cat.height;
       const w = h * (catImg.naturalWidth / catImg.naturalHeight);
@@ -874,7 +1183,36 @@
 
     for (const sp of spiders) {
       let spriteH = 60;
-      if (spiderImg.complete && spiderImg.naturalWidth > 0) {
+      if (sp.kind === 'crab') {
+        if (crabImg.complete && crabImg.naturalWidth > 0) {
+          const w = 160;
+          const h = w * (crabImg.naturalHeight / crabImg.naturalWidth);
+          spriteH = h;
+          ctx.drawImage(crabImg, sp.x - w / 2, sp.y - h / 2, w, h);
+          const eyeX = sp.x;
+          const eyeY = sp.y - h * 0.2;
+          const isRed = sp.eyeState === 'red';
+          const pulse = isRed ? 0.7 + 0.3 * Math.sin(Date.now() / 90) : 1;
+          if (isRed) {
+            ctx.fillStyle = `rgba(255, 60, 60, ${0.35 * pulse})`;
+            ctx.beginPath();
+            ctx.arc(eyeX, eyeY, 14, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.fillStyle = isRed
+            ? `rgba(255, 40, 40, ${0.95 * pulse})`
+            : 'rgba(255, 215, 70, 0.95)';
+          ctx.beginPath();
+          ctx.arc(eyeX, eyeY, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        } else {
+          spriteH = 80;
+          drawSprite('🦀', sp.x, sp.y, 80);
+        }
+      } else if (spiderImg.complete && spiderImg.naturalWidth > 0) {
         const ratio = spiderImg.naturalHeight / spiderImg.naturalWidth;
         const w = SPIDER_W;
         const h = w * ratio;
@@ -883,8 +1221,8 @@
       } else {
         drawSprite('🕷️', sp.x, sp.y, 60);
       }
-      const remaining = Math.max(0, SPIDER_KILL_HITS - sp.hits);
-      const frac = remaining / SPIDER_KILL_HITS;
+      const remaining = Math.max(0, sp.maxHits - sp.hits);
+      const frac = remaining / sp.maxHits;
       const barW = 64;
       const barH = 6;
       const barX = sp.x - barW / 2;
@@ -900,7 +1238,9 @@
 
     for (const s of shells) {
       ctx.save();
-      const trailColor = s.reflected ? 'rgba(255,240,100,0.6)' : 'rgba(60,30,20,0.5)';
+      const trailColor = world === 2
+        ? (s.reflected ? 'rgba(255,240,100,0.65)' : 'rgba(255,80,40,0.7)')
+        : (s.reflected ? 'rgba(255,240,100,0.6)' : 'rgba(60,30,20,0.5)');
       ctx.strokeStyle = trailColor;
       ctx.lineWidth = 4;
       ctx.lineCap = 'round';
@@ -913,12 +1253,14 @@
       ctx.stroke();
       ctx.restore();
 
-      ctx.fillStyle = s.reflected ? '#fff066' : '#2a1a10';
+      ctx.fillStyle = world === 2
+        ? (s.reflected ? '#fff066' : '#ff3030')
+        : (s.reflected ? '#fff066' : '#2a1a10');
       ctx.beginPath();
       ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
       ctx.fill();
       if (!s.reflected) {
-        ctx.strokeStyle = '#aa3030';
+        ctx.strokeStyle = world === 2 ? '#7a0000' : '#aa3030';
         ctx.lineWidth = 2;
         ctx.stroke();
       }
@@ -945,6 +1287,23 @@
       ctx.strokeStyle = '#3aa0d6';
       ctx.lineWidth = 2;
       ctx.stroke();
+    }
+
+    if (treeRing) {
+      const t = treeRing.t;
+      const r = treeRing.maxR * (1 - t * t);
+      ctx.save();
+      ctx.strokeStyle = `rgba(140, 230, 120, ${t})`;
+      ctx.lineWidth = 10 * t + 3;
+      ctx.beginPath();
+      ctx.arc(treeRing.x, treeRing.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(255, 220, 120, ${t * 0.6})`;
+      ctx.lineWidth = 4 * t + 1;
+      ctx.beginPath();
+      ctx.arc(treeRing.x, treeRing.y, r * 0.85, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
 
     if (parry.ringT > 0) {
